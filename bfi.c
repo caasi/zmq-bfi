@@ -178,7 +178,5 @@ int main(int argc, char *argv[]) {
 	
 	machine_term(&machine);
 
-	fputc('\n', stdout);
-
 	fclose(source);
 }
