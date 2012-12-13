@@ -3,11 +3,11 @@
 #include<string.h>
 #include<zmq.h> /* 0MQ 2.2 */
 
-#define PROGRAM_LIMIT 1024
-#define STACK_LIMIT 1024
 #define CELL_LIMIT 3000
 
 /* Convert C string to 0MQ string and send to socket */
+char message[32];
+
 static int
 s_send (void *socket, char *string) {
     zmq_msg_t message;
@@ -21,11 +21,8 @@ s_send (void *socket, char *string) {
 typedef struct Machine {
 	void *zmq_context;
 	void *zmq_publisher;
-	unsigned char *pc;
-	unsigned char *tail;
-	unsigned char program[PROGRAM_LIMIT];
-	unsigned char **stack_ptr;
-	unsigned char *stack[STACK_LIMIT];
+	unsigned int program_size;
+	unsigned char *program;
 	unsigned char *cell_ptr;
 	unsigned char cells[CELL_LIMIT];
 } Machine;
@@ -42,9 +39,6 @@ void machine_init(Machine* machine) {
 		exit(EXIT_FAILURE);
 	}
 	
-	machine->pc = machine->program;
-	machine->tail = machine->pc;
-	machine->stack_ptr = machine->stack;
 	machine->cell_ptr = machine->cells;
 
 	for (i = 0; i < CELL_LIMIT; ++i) {
@@ -55,13 +49,21 @@ void machine_init(Machine* machine) {
 }
 
 void machine_term(Machine* machine) {
+	free(machine->program);
 	zmq_close(machine->zmq_publisher);
 	zmq_term(machine->zmq_context);
 }
 
 void machine_load(Machine* machine, FILE *source) {
-	int c;
-	unsigned int index = 0;
+	int c, i, size;
+
+	fseek(source, 0, SEEK_END);
+	size = ftell(source);
+	fseek(source, 0, SEEK_SET);
+
+	machine->program = (unsigned char *)malloc(sizeof(char) * size);
+
+	i = 0;
 
 	while((c = fgetc(source)) != EOF) {
 		switch(c) {
@@ -73,105 +75,77 @@ void machine_load(Machine* machine, FILE *source) {
 			case ',':
 			case '[':
 			case ']':
-				*machine->pc++ = (unsigned char)c;
+				machine->program[i++] = (unsigned char)c;
 				break;
 			default:
 				break;
 		}
 	}
 
-	machine->tail = machine->pc;
-	machine->pc = machine->program;
-	
+	machine->program_size = i;
+
 	return;
 }
 
-int machine_exec(Machine* machine) {
-	unsigned int depth = 0;
-	unsigned char *next = machine->pc + 1;
-	char message[32];
-
-	if (machine->pc == machine->program) {
-		sprintf(message, "BEGIN:%d", CELL_LIMIT);
+int machine_exec(Machine* machine, unsigned int start, unsigned int end) {
+	unsigned int depth = 0, i, j;
+	
+	for (i = start; i < end; ++i) {
+		sprintf(message, "EXEC:%ld", machine->cell_ptr - machine->cells);
 		s_send(machine->zmq_publisher, message);
-	}
 
-	switch(*machine->pc) {
-		case '>':
-			++machine->cell_ptr;
-			if (machine->cell_ptr == &machine->cells[CELL_LIMIT]) {
-				machine->cell_ptr = machine->cells;
-			}
-			break;
-		case '<':
-			--machine->cell_ptr;
-			if (machine->cell_ptr < machine->cells) {
-				machine->cell_ptr = &machine->cells[CELL_LIMIT];
-			}
-			break;
-		case '+':
-			++*machine->cell_ptr;
+		usleep(33333); /* 30 fps */
 
-			sprintf(message, "INC");
-			s_send(machine->zmq_publisher, message);
-			break;
-		case '-':
-			--*machine->cell_ptr;
-
-			sprintf(message, "DEC");
-			s_send(machine->zmq_publisher, message);
-			break;
-		case '.':
-			putchar(*machine->cell_ptr);
-
-			sprintf(message, "OUT:%c", *machine->cell_ptr);
-			s_send(machine->zmq_publisher, message);
-			break;
-		case ',':
-			*machine->cell_ptr = getchar();
-
-			sprintf(message, "IN:%c", *machine->cell_ptr);
-			s_send(machine->zmq_publisher, message);
-			break;
-		case '[':
-			if (*machine->cell_ptr == 0) {
-				while(*next != ']' || depth != 0) {
-					if (*next == '[') ++depth;
-					if (*next == ']') --depth;
-					++next;
+		switch(machine->program[i]) {
+			case '>':
+				++machine->cell_ptr;
+				if (machine->cell_ptr == &machine->cells[CELL_LIMIT]) {
+					machine->cell_ptr = machine->cells;
 				}
-			} else {
-				if (machine->stack_ptr >= &machine->stack[STACK_LIMIT]) {
-					fprintf(stderr, "stack overflow!\n");
-					exit(EXIT_FAILURE);
+				break;
+			case '<':
+				--machine->cell_ptr;
+				if (machine->cell_ptr < machine->cells) {
+					machine->cell_ptr = &machine->cells[CELL_LIMIT];
 				}
-				*machine->stack_ptr++ = next;
-			}
-			break;
-		case ']':
-			if (*machine->cell_ptr != 0) {
-				next = *(machine->stack_ptr - 1);
-			} else {
-				--machine->stack_ptr;
-			}
-			break;
-		default:
-			break;
-	}
+				break;
+			case '+':
+				++*machine->cell_ptr;
 
-	machine->pc = next;
+				sprintf(message, "SET:%c", *machine->cell_ptr);
+				s_send(machine->zmq_publisher, message);
+				break;
+			case '-':
+				--*machine->cell_ptr;
 
-	sprintf(message, "NEXT:%u", (unsigned int)(machine->pc - machine->program));
-	s_send(machine->zmq_publisher, message);
+				sprintf(message, "SET:%c", *machine->cell_ptr);
+				s_send(machine->zmq_publisher, message);
+				break;
+			case '.':
+				putchar(*machine->cell_ptr);
 
-	usleep(33333); /* 30 fps */
+				sprintf(message, "OUT:%c", *machine->cell_ptr);
+				s_send(machine->zmq_publisher, message);
+				break;
+			case ',':
+				*machine->cell_ptr = getchar();
 
-	if (machine->pc < machine->tail) {
-		return 1;
-	} else {
-		sprintf(message, "END");
-		s_send(machine->zmq_publisher, message);
-		return 0;
+				sprintf(message, "IN:%c", *machine->cell_ptr);
+				s_send(machine->zmq_publisher, message);
+				break;
+			case '[':
+				for (j = i + 1, depth = 0; machine->program[j] != ']' || depth != 0; ++j) {
+					if (machine->program[j] == '[') ++depth;
+					if (machine->program[j] == ']') --depth;
+				}
+				while (*machine->cell_ptr) {
+					machine_exec(machine, i + 1, j);
+				}
+				i = j;
+				break;
+			default:
+				break;
+		}
 	}
 }
 
@@ -184,7 +158,7 @@ int main(int argc, char *argv[]) {
 		return -1;
 	}
 
-	source = fopen(argv[1], "r");
+	source = fopen(argv[1], "rb");
 
 	if (source == NULL) {
 		printf("can't find %s!\n", argv[1]);
@@ -193,7 +167,15 @@ int main(int argc, char *argv[]) {
 
 	machine_init(&machine);
 	machine_load(&machine, source);
-	while(machine_exec(&machine));
+
+	sprintf(message, "START:%d", CELL_LIMIT);
+	s_send(machine.zmq_publisher, message);
+
+	machine_exec(&machine, 0, machine.program_size);
+
+	sprintf(message, "END");
+	s_send(machine.zmq_publisher, message);
+	
 	machine_term(&machine);
 
 	fputc('\n', stdout);
