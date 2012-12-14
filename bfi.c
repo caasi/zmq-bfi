@@ -18,11 +18,16 @@ s_send (void *socket, char *string) {
     return (size);
 }
 
+typedef struct Instruction {
+	unsigned char code;
+	unsigned int pair;
+} Instruction;
+
 typedef struct Machine {
 	void *zmq_context;
 	void *zmq_publisher;
 	unsigned int program_size;
-	unsigned char *program;
+	Instruction *program;
 	unsigned char *cell_ptr;
 	unsigned char cells[CELL_LIMIT];
 } Machine;
@@ -54,6 +59,25 @@ void machine_term(Machine* machine) {
 	zmq_term(machine->zmq_context);
 }
 
+unsigned int find_mate(Instruction *program, unsigned int start) {
+	int i, mate;
+
+	for (i = start - 1; i >= 0; --i) {
+		switch (program[i].code) {
+			case ']':
+				mate = find_mate(program, i);
+				program[mate].pair = i;
+				i = mate;
+				break;
+			case '[':
+				return i;
+		}
+	}
+
+	printf("[ and ] mismatch!");
+	exit(EXIT_FAILURE);
+};
+
 void machine_load(Machine* machine, FILE *source) {
 	int c, i, size;
 
@@ -61,7 +85,7 @@ void machine_load(Machine* machine, FILE *source) {
 	size = ftell(source);
 	fseek(source, 0, SEEK_SET);
 
-	machine->program = (unsigned char *)malloc(sizeof(char) * size);
+	machine->program = (Instruction *)malloc(sizeof(Instruction) * size);
 
 	i = 0;
 
@@ -75,7 +99,13 @@ void machine_load(Machine* machine, FILE *source) {
 			case ',':
 			case '[':
 			case ']':
-				machine->program[i++] = (unsigned char)c;
+				machine->program[i].code = (unsigned char)c;
+
+				if (c == ']') {
+					machine->program[find_mate(machine->program, i)].pair = i;
+				}
+
+				i += 1;
 				break;
 			default:
 				break;
@@ -96,7 +126,7 @@ int machine_exec(Machine* machine, unsigned int start, unsigned int end) {
 
 		usleep(33333); /* 30 fps */
 
-		switch(machine->program[i]) {
+		switch(machine->program[i].code) {
 			case '>':
 				++machine->cell_ptr;
 				if (machine->cell_ptr == &machine->cells[CELL_LIMIT]) {
@@ -134,14 +164,10 @@ int machine_exec(Machine* machine, unsigned int start, unsigned int end) {
 				s_send(machine->zmq_publisher, message);
 				break;
 			case '[':
-				for (j = i + 1, depth = 0; machine->program[j] != ']' || depth != 0; ++j) {
-					if (machine->program[j] == '[') ++depth;
-					if (machine->program[j] == ']') --depth;
-				}
 				while (*machine->cell_ptr) {
-					machine_exec(machine, i + 1, j);
+					machine_exec(machine, i + 1, machine->program[i].pair);
 				}
-				i = j;
+				i = machine->program[i].pair;
 				break;
 			default:
 				break;
