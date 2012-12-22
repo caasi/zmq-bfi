@@ -35,7 +35,7 @@ typedef struct Machine {
 void machine_init(Machine* machine) {
 	int i, rc;
 
-	machine->zmq_context = zmq_init(2);
+	machine->zmq_context = zmq_init(1);
 	machine->zmq_publisher = zmq_socket(machine->zmq_context, ZMQ_PUSH);
 	rc = zmq_bind(machine->zmq_publisher, "ipc:///tmp/brainfuck.ipc");
 	
