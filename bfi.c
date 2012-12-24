@@ -3,7 +3,8 @@
 #include<string.h>
 #include<zmq.h> /* 0MQ 2.2 */
 
-#define CELL_LIMIT 3000
+#define CELL_LIMIT 900
+#define FPS 60
 
 /* Convert C string to 0MQ string and send to socket */
 char message[32];
@@ -121,10 +122,10 @@ int machine_exec(Machine* machine, unsigned int start, unsigned int end) {
 	unsigned int depth = 0, i, j;
 	
 	for (i = start; i < end; ++i) {
-		sprintf(message, "EXEC:%ld", machine->cell_ptr - machine->cells);
+		sprintf(message, "EXEC:%ld:%u", machine->cell_ptr - machine->cells, *machine->cell_ptr);
 		s_send(machine->zmq_publisher, message);
 
-		usleep(33333); /* 30 fps */
+		usleep(1000000 / FPS); /* 30 fps */
 
 		switch(machine->program[i].code) {
 			case '>':
@@ -142,25 +143,25 @@ int machine_exec(Machine* machine, unsigned int start, unsigned int end) {
 			case '+':
 				++*machine->cell_ptr;
 
-				sprintf(message, "SET:%c", *machine->cell_ptr);
+				sprintf(message, "SET:%u", *machine->cell_ptr);
 				s_send(machine->zmq_publisher, message);
 				break;
 			case '-':
 				--*machine->cell_ptr;
 
-				sprintf(message, "SET:%c", *machine->cell_ptr);
+				sprintf(message, "SET:%u", *machine->cell_ptr);
 				s_send(machine->zmq_publisher, message);
 				break;
 			case '.':
 				putchar(*machine->cell_ptr);
 
-				sprintf(message, "OUT:%c", *machine->cell_ptr);
+				sprintf(message, "OUT:%u", *machine->cell_ptr);
 				s_send(machine->zmq_publisher, message);
 				break;
 			case ',':
 				*machine->cell_ptr = getchar();
 
-				sprintf(message, "IN:%c", *machine->cell_ptr);
+				sprintf(message, "IN:%u", *machine->cell_ptr);
 				s_send(machine->zmq_publisher, message);
 				break;
 			case '[':
