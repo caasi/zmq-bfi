@@ -5,9 +5,9 @@
 #include<stdlib.h>
 #include<string.h>
 
-#define CELL_WIDTH 10
-#define CELL_HEIGHT 10
-#define CELL_MAX_COL 60
+#define CELL_WIDTH 20
+#define CELL_HEIGHT 20
+#define CELL_MAX_COL 30
 
 ALLEGRO_EVENT_QUEUE *event_queue;
 ALLEGRO_TIMER *timer;
@@ -47,6 +47,7 @@ void init() {
 	timer = al_create_timer(1.0 / 60);
 	if (!timer) abort_game("Failed to create timer.");
 
+	al_set_new_display_option(ALLEGRO_SINGLE_BUFFER, 1, ALLEGRO_REQUIRE);
 	al_set_new_display_flags(ALLEGRO_WINDOWED);
 	display = al_create_display(CELL_WIDTH * CELL_MAX_COL, CELL_HEIGHT);
 	if (!display) abort_game("Failed to create display.");
@@ -76,24 +77,74 @@ void cleanup() {
 }
 
 void game_loop() {
-	int redraw = 0;
+	int redraw = 0, index = 0, data = 0;
 	al_start_timer(timer);
 
 	while(!done) {
 		ALLEGRO_EVENT event;
 		char *message = s_recv(receiver);
+		char *part;
+		int cell_num, height, x, y;
 
 		if (message) {
-			fflush(stdout);
-			printf("%s\n", message);
+			part = strtok(message, ":");
+			if (part != NULL) {
+				if (strncmp(part, "START", 5) == 0) {
+					part = strtok(NULL, ":");
+					cell_num = atoi(part);
+					height = cell_num / CELL_MAX_COL;
+					if (cell_num % CELL_MAX_COL != 0) {
+						height += 1;
+					}
+					al_resize_display(display, CELL_MAX_COL * CELL_WIDTH, height * CELL_HEIGHT);
+					al_clear_to_color(al_map_rgb(0, 0, 0));
+				}
+				if (strncmp(part, "EXEC", 4) == 0) {
+					x = index % CELL_MAX_COL * CELL_WIDTH;
+					y = index / CELL_MAX_COL * CELL_HEIGHT;
+					al_draw_filled_rectangle(x, y, x + CELL_WIDTH, y + CELL_HEIGHT, al_map_rgb(data, data, data));
+					part = strtok(NULL, ":");
+					index = atoi(part);
+					part = strtok(NULL, ":");
+					data = atoi(part);
+					x = index % CELL_MAX_COL * CELL_WIDTH;
+					y = index / CELL_MAX_COL * CELL_HEIGHT;
+					al_draw_filled_rectangle(x, y, x + CELL_WIDTH, y + CELL_HEIGHT / 10, al_map_rgb(255, 0, 0));
+				}
+				if (strncmp(part, "SET", 3) == 0) {
+					part = strtok(NULL, ":");
+					data = atoi(part);
+					x = index % CELL_MAX_COL * CELL_WIDTH;
+					y = index / CELL_MAX_COL * CELL_HEIGHT;
+					al_draw_filled_rectangle(x, y, x + CELL_WIDTH, y + CELL_HEIGHT, al_map_rgb(data, data, data));
+				}
+				if (strncmp(part, "IN", 2) == 0) {
+					part = strtok(NULL, ":");
+					data = atoi(part);
+					x = index % CELL_MAX_COL * CELL_WIDTH;
+					y = index / CELL_MAX_COL * CELL_HEIGHT;
+					al_draw_filled_rectangle(x, y, x + CELL_WIDTH, y + CELL_HEIGHT, al_map_rgb(data, data, 255));
+				}
+				if (strncmp(part, "OUT", 3) == 0) {
+					part = strtok(NULL, ":");
+					data = atoi(part);
+					x = index % CELL_MAX_COL * CELL_WIDTH;
+					y = index / CELL_MAX_COL * CELL_HEIGHT;
+					al_draw_filled_rectangle(x, y, x + CELL_WIDTH, y + CELL_HEIGHT, al_map_rgb(data, 255, data));
+				}
+				if (strncmp(part, "END", 3) == 0) {
+					done = 1;
+				}
+			}
 		}
+
+		al_flip_display();
+
+		free(message);
 
 		al_wait_for_event(event_queue, &event);
 
 		switch(event.type) {
-			case ALLEGRO_EVENT_TIMER:
-				redraw = 1;
-				break;
 			case ALLEGRO_EVENT_KEY_DOWN:
 				if (event.keyboard.keycode == ALLEGRO_KEY_ESCAPE) {
 					done = 1;
@@ -104,13 +155,6 @@ void game_loop() {
 				break;
 			default:
 				break;
-		}
-
-		if (redraw && al_is_event_queue_empty(event_queue)) {
-			redraw = 0;
-			al_clear_to_color(al_map_rgb(0, 0, 0));
-			al_draw_line(80, 60, 320, 240, al_map_rgb(255, 0, 0), 1);
-			al_flip_display();
 		}
 	}
 }
